@@ -1,41 +1,40 @@
 <?php
+/**
+ * Class WP_Customize_Widget_Setting.
+ *
+ * @package CustomizeWidgetsPlus
+ */
 
 namespace CustomizeWidgetsPlus;
 
 /**
- * Class WP_Customize_Widget_Setting
+ * Subclass of WP_Customize_Setting to represent widget settings.
  *
  * @package CustomizeWidgetsPlus
- *
  */
 class WP_Customize_Widget_Setting extends \WP_Customize_Setting {
 
 	const WIDGET_SETTING_ID_PATTERN = '/^(?P<customize_id_base>widget_(?P<widget_id_base>.+?))(?:\[(?P<widget_number>\d+)\])?$/';
 
 	/**
-	 * All current instance data for registered widgets.
+	 * Setting type.
 	 *
-	 * @see WP_Customize_Widget_Setting::__construct()
-	 * @see WP_Customize_Widget_Setting::value()
-	 * @see WP_Customize_Widget_Setting::preview()
-	 * @see WP_Customize_Widget_Setting::update()
-	 * @see WP_Customize_Widget_Setting::filter_pre_option_widget_settings()
-	 *
-	 * @var array
-	 */
-	static $current_widget_type_values = array();
-
-	/**
 	 * @var string
 	 */
 	public $type = 'widget';
 
 	/**
+	 * Widget ID Base.
+	 *
+	 * @see \WP_Widget::$id_base
+	 *
 	 * @var string
 	 */
 	public $widget_id_base;
 
 	/**
+	 * The multi widget number for this setting.
+	 *
 	 * @var int
 	 */
 	public $widget_number;
@@ -50,69 +49,95 @@ class WP_Customize_Widget_Setting extends \WP_Customize_Setting {
 	public $is_previewed = false;
 
 	/**
+	 * Plugin's instance of Efficient_Multidimensional_Setting_Sanitizing.
+	 *
+	 * @var Efficient_Multidimensional_Setting_Sanitizing
+	 */
+	public $efficient_multidimensional_setting_sanitizing;
+
+	/**
 	 * Constructor.
 	 *
 	 * Any supplied $args override class property defaults.
 	 *
-	 * @param \WP_Customize_Manager $manager
-	 * @param string               $id      An specific ID of the setting. Can be a
-	 *                                      theme mod or option name.
-	 * @param array                $args    Setting arguments.
-	 * @throws Exception if $id is not valid for a widget
+	 * @param \WP_Customize_Manager $manager Manager instance.
+	 * @param string                $id      An specific ID of the setting. Can be a
+	 *                                       theme mod or option name.
+	 * @param array                 $args    Setting arguments.
+	 * @throws Exception If $id is not valid for a widget.
 	 */
-	public function __construct( $manager, $id, $args = array() ) {
+	public function __construct( \WP_Customize_Manager $manager, $id, array $args = array() ) {
 		unset( $args['type'] );
 
-		if ( ! preg_match( self::WIDGET_SETTING_ID_PATTERN, $id, $matches ) ) {
+		if ( empty( $manager->efficient_multidimensional_setting_sanitizing ) ) {
+			throw new Exception( 'Expected WP_Customize_Manager::$efficient_multidimensional_setting_sanitizing to be set.' );
+		}
+		$this->efficient_multidimensional_setting_sanitizing = $manager->efficient_multidimensional_setting_sanitizing;
+
+		if ( ! preg_match( static::WIDGET_SETTING_ID_PATTERN, $id, $matches ) ) {
 			throw new Exception( "Illegal widget setting ID: $id" );
 		}
-		// @todo validate that the $id_base is for a valid WP_Widget?
 		$this->widget_id_base = $matches['widget_id_base'];
+
 		if ( isset( $matches['widget_number'] ) ) {
 			$this->widget_number = intval( $matches['widget_number'] );
-		}
-
-		if ( ! isset( self::$current_widget_type_values[ $this->widget_id_base ] ) ) {
-			self::$current_widget_type_values[ $this->widget_id_base ] = get_option( "widget_{$this->widget_id_base}", array() );
-			add_filter( "pre_option_widget_{$this->widget_id_base}", array( $this, 'filter_pre_option_widget_settings' ) );
 		}
 
 		parent::__construct( $manager, $id, $args );
 	}
 
 	/**
-	 * Pre-option filter which intercepts the expensive WP_Customize_Setting::_preview_filter().
-	 *
-	 * @see WP_Customize_Setting::_preview_filter()
-	 * @param array $pre_value
-	 * @return array
-	 */
-	function filter_pre_option_widget_settings( $pre_value ) {
-		unset( $pre_value );
-		$pre_value = self::$current_widget_type_values[ $this->widget_id_base ];
-		return $pre_value;
-	}
-
-	/**
 	 * Get the instance data for a given widget setting.
 	 *
 	 * @return string
+	 * @throws Exception
 	 */
 	public function value() {
 		$value = $this->default;
-		if ( array_key_exists( $this->widget_number, self::$current_widget_type_values[ $this->widget_id_base ] ) ) {
-			$value = self::$current_widget_type_values[ $this->widget_id_base ][ $this->widget_number ];
+		$sanitizing = $this->efficient_multidimensional_setting_sanitizing;
+		if ( ! isset( $sanitizing->current_widget_type_values[ $this->widget_id_base ] ) ) {
+			throw new Exception( "current_widget_type_values not set yet for $this->widget_id_base. Current action: " . current_action() );
+		}
+		if ( isset( $sanitizing->current_widget_type_values[ $this->widget_id_base ][ $this->widget_number ] ) ) {
+			$value = $sanitizing->current_widget_type_values[ $this->widget_id_base ][ $this->widget_number ];
 		}
 		return $value;
 	}
 
 	/**
 	 * Handle previewing the widget setting.
+	 *
+	 * Because this can be called very early in the WordPress execution flow, as
+	 * early as after_setup_theme, if widgets_init hasn't been called yet then
+	 * the preview logic is deferred to the widgets_init action.
+	 *
+	 * @see WP_Customize_Widget_Setting::apply_preview()
+	 *
+	 * @return void
 	 */
 	public function preview() {
 		if ( $this->is_previewed ) {
 			return;
 		}
+		$this->is_previewed = true;
+
+		if ( did_action( 'widgets_init' ) ) {
+			$this->apply_preview();
+		} else {
+			$priority = 93; // Because Efficient_Multidimensional_Setting_Sanitizing::capture_widget_instance_data() happens at 92.
+			add_action( 'widgets_init', array( $this, 'apply_preview' ), $priority );
+		}
+	}
+
+	/**
+	 * Optionally-deferred continuation logic from the preview method.
+	 *
+	 * @see WP_Customize_Widget_Setting::preview()
+	 *
+	 * @throws Exception
+	 * @return void
+	 */
+	public function apply_preview() {
 		if ( ! isset( $this->_original_value ) ) {
 			$this->_original_value = $this->value();
 		}
@@ -125,35 +150,37 @@ class WP_Customize_Widget_Setting extends \WP_Customize_Setting {
 			&&
 			$this->manager->doing_ajax( 'update-widget' )
 			&&
-			isset( $_REQUEST['widget-id'] ) // input var okay
+			isset( $_REQUEST['widget-id'] ) // WPCS: input var okay.
 			&&
-			( $this->id === $this->manager->widgets->get_setting_id( wp_unslash( sanitize_text_field( $_REQUEST['widget-id'] ) ) ) ) // input var okay
+			( $this->id === $this->manager->widgets->get_setting_id( wp_unslash( sanitize_text_field( $_REQUEST['widget-id'] ) ) ) ) // WPCS: input var okay.
 		);
 		if ( $is_null_because_previewing_new_widget ) {
 			$value = array();
 		}
+		$sanitizing = $this->efficient_multidimensional_setting_sanitizing;
 		if ( ! is_null( $value ) ) {
-			self::$current_widget_type_values[ $this->widget_id_base ][ $this->widget_number ] = $value;
+			$sanitizing->current_widget_type_values[ $this->widget_id_base ][ $this->widget_number ] = $value;
 		}
-		$this->is_previewed = true;
 	}
 
 	/**
 	 * Save the value of the widget setting.
 	 *
-	 * @param array $value The value to update.
-	 * @return mixed The result of saving the value.
+	 * @param array|mixed $value The value to update.
+	 * @return void
 	 */
 	protected function update( $value ) {
+		$sanitizing = $this->efficient_multidimensional_setting_sanitizing;
+
+		// @todo Maybe more elegant to do $sanitizing->widget_objs[ $this->widget_id_base ]->get_settings() or $sanitizing->current_widget_type_values[ $this->widget_id_base ]
 		$option_name = "widget_{$this->widget_id_base}";
-		remove_filter( "pre_option_{$option_name}", array( $this, 'filter_pre_option_widget_settings' ) );
 		$option_value = get_option( $option_name, array() );
 		$option_value[ $this->widget_number ] = $value;
+		$option_value['_multiwidget'] = 1; // Ensure this is set so that wp_convert_widget_settings() won't be called in WP_Widget::get_settings().
 		update_option( $option_name, $option_value );
-		add_filter( "pre_option_{$option_name}", array( $this, 'filter_pre_option_widget_settings' ) );
 
 		if ( ! $this->is_previewed ) {
-			self::$current_widget_type_values[ $this->widget_id_base ][ $this->widget_number ] = $value;
+			$sanitizing->current_widget_type_values[ $this->widget_id_base ][ $this->widget_number ] = $value;
 		}
 	}
 }

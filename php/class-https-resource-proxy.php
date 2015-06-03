@@ -84,6 +84,8 @@ class HTTPS_Resource_Proxy {
 	}
 
 	/**
+	 * Return whether the proxy is enabled.
+	 *
 	 * @return bool
 	 */
 	function is_proxy_enabled() {
@@ -100,6 +102,8 @@ class HTTPS_Resource_Proxy {
 	}
 
 	/**
+	 * Add the filters for injecting the functionality into the page.
+	 *
 	 * @action init
 	 */
 	function add_proxy_filtering() {
@@ -111,6 +115,15 @@ class HTTPS_Resource_Proxy {
 		add_filter( 'script_loader_src', array( $this, 'filter_script_loader_src' ) );
 		add_filter( 'style_loader_src', array( $this, 'filter_style_loader_src' ) );
 		add_action( 'wp_enqueue_scripts', array( $this, 'enqueue_scripts' ) );
+
+		/*
+		 * On WordPress.com, prevent hostname in assets from being replaced with
+		 * the WPCOM CDN (e.g. w1.wp.com) as then the assets will 404.
+		 */
+		if ( $this->plugin->is_wpcom_vip_prod() ) {
+			remove_filter( 'style_loader_src', 'staticize_subdomain' );
+			remove_filter( 'script_loader_src', 'staticize_subdomain' );
+		}
 	}
 
 	/**

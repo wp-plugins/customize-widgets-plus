@@ -22,7 +22,16 @@ class Test_Plugin extends Base_Test_Case {
 		$this->assertArrayHasKey( 'disable_widgets_init', $this->plugin->config );
 		$this->assertArrayHasKey( 'disable_widgets_factory', $this->plugin->config );
 		$this->assertArrayHasKey( 'active_modules', $this->plugin->config );
-		$this->assertEquals( 10, has_action( 'after_setup_theme', array( $this->plugin, 'init' ) ) );
+		$this->assertEquals( 9, has_action( 'after_setup_theme', array( $this->plugin, 'init' ) ) );
+	}
+
+	/**
+	 * @see Plugin::is_module_active()
+	 */
+	function test_is_module_active() {
+		foreach ( $this->plugin->config['active_modules'] as $module_name => $is_active ) {
+			$this->assertEquals( $is_active, $this->plugin->is_module_active( $module_name ) );
+		}
 	}
 
 	/**
